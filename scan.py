@@ -166,6 +166,15 @@ def lambda_handler(event, context):
         pass
     if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
         delete_s3_object(s3_object)
+    if AV_QUARANTINE_S3_BUCKET is not None and scan_result == AV_STATUS_INFECTED:
+        s3.meta.client.copy(
+            {
+                'Bucket': s3_object.bucket_name,
+                'Key': s3_object.key
+            },
+            AV_QUARANTINE_S3_BUCKET, s3_object.key
+        )
+        delete_s3_object(s3_object)
     print("Script finished at %s\n" %
           datetime.utcnow().strftime("%Y/%m/%d %H:%M:%S UTC"))
 
