@@ -18,6 +18,7 @@ import copy
 import json
 import metrics
 import urllib
+import requests
 from common import *
 from datetime import datetime
 from distutils.util import strtobool
@@ -150,6 +151,9 @@ def lambda_handler(event, context):
     s3_object = event_object(event)
     verify_s3_object_version(s3_object)
     sns_start_scan(s3_object)
+
+    file_name, file_type = os.path.splitext(s3_object.key)
+
     file_path = download_s3_object(s3_object, "/tmp")
     clamav.update_defs_from_s3(AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX)
     scan_result = clamav.scan_file(file_path)
@@ -164,8 +168,12 @@ def lambda_handler(event, context):
         os.remove(file_path)
     except OSError:
         pass
+
+    # If AV_DELETE_INFECTED_FILES is specified, delete the infected file
     if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
         delete_s3_object(s3_object)
+
+    # If AV_QUARANTINE_S3_BUCKET is specified, move the infected file to that bucket
     if AV_QUARANTINE_S3_BUCKET is not None and scan_result == AV_STATUS_INFECTED:
         s3.meta.client.copy(
             {
@@ -175,6 +183,13 @@ def lambda_handler(event, context):
             AV_QUARANTINE_S3_BUCKET, s3_object.key
         )
         delete_s3_object(s3_object)
+
+    # If AV_STATUS_CALLBACK_ENDPOINT is specified, send POST request with object name and scan result
+    if AV_STATUS_CALLBACK_ENDPOINT is not None:
+        body = {'id': file_name,
+                'status': scan_result}
+        requests.post(AV_STATUS_CALLBACK_ENDPOINT, body)
+
     print("Script finished at %s\n" %
           datetime.utcnow().strftime("%Y/%m/%d %H:%M:%S UTC"))
 
