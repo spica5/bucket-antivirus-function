@@ -71,8 +71,22 @@ def delete_s3_object(s3_object):
     else:
         print("Infected file deleted: %s.%s" % (s3_object.bucket_name, s3_object.key))
 
+def move_s3_object_clean(s3_object):
+    # If AV_CLEAN_S3_BUCKET is specified, move file to the clean bucket
+    if AV_CLEAN_S3_BUCKET is not None:
+        s3.meta.client.copy(
+            {
+                'Bucket': s3_object.bucket_name,
+                'Key': s3_object.key
+            },
+            AV_CLEAN_S3_BUCKET, s3_object.key
+        )
+        delete_s3_object(s3_object)
+    else:
+        print("Clean bucket is not specified.")
+
 def quarantine_s3_object(s3_object):
-    # If AV_QUARANTINE_S3_BUCKET is specified, quarantine file to that bucket
+    # If AV_QUARANTINE_S3_BUCKET is specified, quarantine file to the quarantine bucket
     if AV_QUARANTINE_S3_BUCKET is not None:
         s3.meta.client.copy(
             {
@@ -197,8 +211,9 @@ def lambda_handler(event, context):
         if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
             delete_s3_object(s3_object)
 
-        # Quarantine the infected file to other bucket
-        if scan_result == AV_STATUS_INFECTED:
+        if scan_result == AV_STATUS_CLEAN:
+            move_s3_object_clean(s3_object)
+        elif scan_result == AV_STATUS_INFECTED:
             quarantine_s3_object(s3_object)
 
         # Send scan result to callback
