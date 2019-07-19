@@ -23,6 +23,8 @@ AV_SCAN_START_SNS_ARN = os.getenv("AV_SCAN_START_SNS_ARN")
 AV_SCAN_START_METADATA = os.getenv("AV_SCAN_START_METADATA", "av-scan-start")
 AV_STATUS_CLEAN = os.getenv("AV_STATUS_CLEAN", "CLEAN")
 AV_STATUS_INFECTED = os.getenv("AV_STATUS_INFECTED", "INFECTED")
+AV_STATUS_INVALID_FILE = os.getenv("AV_STATUS_INVALID_FILE", "INVALID-FILE")
+AV_STATUS_SIZE_EXCEED = os.getenv("AV_STATUS_SIZE_EXCEED", "SIZE-EXCEED")
 AV_STATUS_METADATA = os.getenv("AV_STATUS_METADATA", "av-status")
 AV_STATUS_SNS_ARN = os.getenv("AV_STATUS_SNS_ARN")
 AV_TIMESTAMP_METADATA = os.getenv("AV_TIMESTAMP_METADATA", "av-timestamp")
@@ -35,6 +37,8 @@ AV_QUARANTINE_S3_BUCKET = os.getenv("AV_QUARANTINE_S3_BUCKET")
 AV_STATUS_CALLBACK_ENDPOINT = os.getenv("AV_STATUS_CALLBACK_ENDPOINT")
 
 AV_DEFINITION_FILENAMES = ["main.cvd","daily.cvd", "daily.cud", "bytecode.cvd", "bytecode.cud"]
+
+ACCEPTABLE_FILE_FORMATS = ["pdf", "doc", "docx", "ppt", "pptx", "pps", "ppsx", "xls", "xlsx", "csv", "txt", "rtf", "odp", "xlr", "wks", "wps", "wpd"]
 
 s3 = boto3.resource('s3')
 s3_client = boto3.client('s3')

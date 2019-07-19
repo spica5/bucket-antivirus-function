@@ -71,6 +71,20 @@ def delete_s3_object(s3_object):
     else:
         print("Infected file deleted: %s.%s" % (s3_object.bucket_name, s3_object.key))
 
+def quarantine_s3_object(s3_object):
+    # If AV_QUARANTINE_S3_BUCKET is specified, quarantine file to that bucket
+    if AV_QUARANTINE_S3_BUCKET is not None:
+        s3.meta.client.copy(
+            {
+                'Bucket': s3_object.bucket_name,
+                'Key': s3_object.key
+            },
+            AV_QUARANTINE_S3_BUCKET, s3_object.key
+        )
+        delete_s3_object(s3_object)
+    else:
+        print("Quarantine bucket is not specified.")
+
 def set_av_metadata(s3_object, result):
     content_type = s3_object.content_type
     metadata = s3_object.metadata
@@ -87,7 +101,6 @@ def set_av_metadata(s3_object, result):
             "MetadataDirective": "REPLACE"
         }
     )
-
 
 def set_av_tags(s3_object, result):
     curr_tags = s3_client.get_object_tagging(Bucket=s3_object.bucket_name, Key=s3_object.key)["TagSet"]
@@ -135,12 +148,12 @@ def sns_scan_results(s3_object, result):
         TargetArn=AV_STATUS_SNS_ARN,
         Message=json.dumps({'default': json.dumps(message)}),
         MessageStructure="json",
-        MessageAttributes = {
+        MessageAttributes={
             AV_STATUS_METADATA: {
                 'DataType': 'String',
                 'StringValue': result
             }
-    }
+        }
     )
 
 
@@ -153,45 +166,51 @@ def lambda_handler(event, context):
     sns_start_scan(s3_object)
 
     file_name, file_type = os.path.splitext(s3_object.key)
+    file_type = file_type[1:]
 
-    file_path = download_s3_object(s3_object, "/tmp")
-    clamav.update_defs_from_s3(AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX)
-    scan_result = clamav.scan_file(file_path)
-    print("Scan of s3://%s resulted in %s\n" % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result))
-    if "AV_UPDATE_METADATA" in os.environ:
-        set_av_metadata(s3_object, scan_result)
-    set_av_tags(s3_object, scan_result)
-    sns_scan_results(s3_object, scan_result)
-    metrics.send(env=ENV, bucket=s3_object.bucket_name, key=s3_object.key, status=scan_result)
-    # Delete downloaded file to free up room on re-usable lambda function container
-    try:
-        os.remove(file_path)
-    except OSError:
-        pass
+    # Check if file type is acceptable. If not, quarantine it
+    if file_type not in ACCEPTABLE_FILE_FORMATS:
+        set_av_tags(s3_object, AV_STATUS_INVALID_FILE)
+        quarantine_s3_object(s3_object)
+        send_callback_request(file_name, AV_STATUS_INVALID_FILE)
+    else:
+        file_path = download_s3_object(s3_object, "/tmp")
+        clamav.update_defs_from_s3(AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX)
+        scan_result = clamav.scan_file(file_path)
+        print("Scan of s3://%s resulted in %s\n" % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result))
+        if "AV_UPDATE_METADATA" in os.environ:
+            set_av_metadata(s3_object, scan_result)
+        set_av_tags(s3_object, scan_result)
+        sns_scan_results(s3_object, scan_result)
+        metrics.send(env=ENV, bucket=s3_object.bucket_name, key=s3_object.key, status=scan_result)
+        # Delete downloaded file to free up room on re-usable lambda function container
+        try:
+            os.remove(file_path)
+        except OSError:
+            pass
 
-    # If AV_DELETE_INFECTED_FILES is specified, delete the infected file
-    if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
-        delete_s3_object(s3_object)
+        # If AV_DELETE_INFECTED_FILES is specified, delete the infected file
+        if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
+            delete_s3_object(s3_object)
 
-    # If AV_QUARANTINE_S3_BUCKET is specified, move the infected file to that bucket
-    if AV_QUARANTINE_S3_BUCKET is not None and scan_result == AV_STATUS_INFECTED:
-        s3.meta.client.copy(
-            {
-                'Bucket': s3_object.bucket_name,
-                'Key': s3_object.key
-            },
-            AV_QUARANTINE_S3_BUCKET, s3_object.key
-        )
-        delete_s3_object(s3_object)
+        # Quarantine the infected file to other bucket
+        if scan_result == AV_STATUS_INFECTED:
+            quarantine_s3_object(s3_object)
 
-    # If AV_STATUS_CALLBACK_ENDPOINT is specified, send POST request with object name and scan result
-    if AV_STATUS_CALLBACK_ENDPOINT is not None:
-        body = {'id': file_name,
-                'status': scan_result}
-        requests.post(AV_STATUS_CALLBACK_ENDPOINT, body)
+        # Send scan result to callback
+        send_callback_request(file_name, scan_result)
 
     print("Script finished at %s\n" %
           datetime.utcnow().strftime("%Y/%m/%d %H:%M:%S UTC"))
 
 def str_to_bool(s):
     return bool(strtobool(str(s)))
+
+def send_callback_request(id, status):
+    # If AV_STATUS_CALLBACK_ENDPOINT is specified, send POST request
+    if AV_STATUS_CALLBACK_ENDPOINT is not None:
+        body = {'id': id,
+                'status': status}
+        requests.post(AV_STATUS_CALLBACK_ENDPOINT, body)
+    else:
+        print("Callback endpoint is not specified.")
