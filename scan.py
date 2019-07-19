@@ -173,6 +173,10 @@ def lambda_handler(event, context):
         set_av_tags(s3_object, AV_STATUS_INVALID_FILE)
         quarantine_s3_object(s3_object)
         send_callback_request(file_name, AV_STATUS_INVALID_FILE)
+    elif s3_object.content_length > MAX_FILE_SIZE:
+        set_av_tags(s3_object, AV_STATUS_SIZE_EXCEED)
+        quarantine_s3_object(s3_object)
+        send_callback_request(file_name, AV_STATUS_SIZE_EXCEED)
     else:
         file_path = download_s3_object(s3_object, "/tmp")
         clamav.update_defs_from_s3(AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX)

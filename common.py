@@ -39,6 +39,7 @@ AV_STATUS_CALLBACK_ENDPOINT = os.getenv("AV_STATUS_CALLBACK_ENDPOINT")
 AV_DEFINITION_FILENAMES = ["main.cvd","daily.cvd", "daily.cud", "bytecode.cvd", "bytecode.cud"]
 
 ACCEPTABLE_FILE_FORMATS = ["pdf", "doc", "docx", "ppt", "pptx", "pps", "ppsx", "xls", "xlsx", "csv", "txt", "rtf", "odp", "xlr", "wks", "wps", "wpd"]
+MAX_FILE_SIZE = 200 * 1024 * 1024   # 200MB
 
 s3 = boto3.resource('s3')
 s3_client = boto3.client('s3')
