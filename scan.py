@@ -63,6 +63,7 @@ def download_s3_object(s3_object, local_prefix):
     s3_object.download_file(local_path)
     return local_path
 
+
 def delete_s3_object(s3_object):
     try:
         s3_object.delete()
@@ -70,6 +71,7 @@ def delete_s3_object(s3_object):
         print("Failed to delete infected file: %s.%s" % (s3_object.bucket_name, s3_object.key))
     else:
         print("Infected file deleted: %s.%s" % (s3_object.bucket_name, s3_object.key))
+
 
 def move_s3_object_clean(s3_object):
     # If AV_CLEAN_S3_BUCKET is specified, move file to the clean bucket
@@ -82,8 +84,11 @@ def move_s3_object_clean(s3_object):
             AV_CLEAN_S3_BUCKET, s3_object.key
         )
         delete_s3_object(s3_object)
+        return s3.Object(AV_CLEAN_S3_BUCKET, s3_object.key)
     else:
         print("Clean bucket is not specified.")
+        return s3_object
+
 
 def quarantine_s3_object(s3_object):
     # If AV_QUARANTINE_S3_BUCKET is specified, quarantine file to the quarantine bucket
@@ -96,8 +101,11 @@ def quarantine_s3_object(s3_object):
             AV_QUARANTINE_S3_BUCKET, s3_object.key
         )
         delete_s3_object(s3_object)
+        return s3.Object(AV_QUARANTINE_S3_BUCKET, s3_object.key)
     else:
         print("Quarantine bucket is not specified.")
+        return s3_object
+
 
 def set_av_metadata(s3_object, result):
     content_type = s3_object.content_type
@@ -184,18 +192,24 @@ def lambda_handler(event, context):
 
     # Check if file type is acceptable. If not, quarantine it
     if file_type not in ACCEPTABLE_FILE_FORMATS:
+        s3_object = quarantine_s3_object(s3_object)
         set_av_tags(s3_object, AV_STATUS_INVALID_FILE)
-        quarantine_s3_object(s3_object)
         send_callback_request(file_name, AV_STATUS_INVALID_FILE)
     elif s3_object.content_length > MAX_FILE_SIZE:
+        s3_object = quarantine_s3_object(s3_object)
         set_av_tags(s3_object, AV_STATUS_SIZE_EXCEED)
-        quarantine_s3_object(s3_object)
         send_callback_request(file_name, AV_STATUS_SIZE_EXCEED)
     else:
         file_path = download_s3_object(s3_object, "/tmp")
         clamav.update_defs_from_s3(AV_DEFINITION_S3_BUCKET, AV_DEFINITION_S3_PREFIX)
         scan_result = clamav.scan_file(file_path)
         print("Scan of s3://%s resulted in %s\n" % (os.path.join(s3_object.bucket_name, s3_object.key), scan_result))
+
+        if scan_result == AV_STATUS_CLEAN:
+            s3_object = move_s3_object_clean(s3_object)
+        elif scan_result == AV_STATUS_INFECTED:
+            s3_object = quarantine_s3_object(s3_object)
+
         if "AV_UPDATE_METADATA" in os.environ:
             set_av_metadata(s3_object, scan_result)
         set_av_tags(s3_object, scan_result)
@@ -210,11 +224,6 @@ def lambda_handler(event, context):
         # If AV_DELETE_INFECTED_FILES is specified, delete the infected file
         if str_to_bool(AV_DELETE_INFECTED_FILES) and scan_result == AV_STATUS_INFECTED:
             delete_s3_object(s3_object)
-
-        if scan_result == AV_STATUS_CLEAN:
-            move_s3_object_clean(s3_object)
-        elif scan_result == AV_STATUS_INFECTED:
-            quarantine_s3_object(s3_object)
 
         # Send scan result to callback
         send_callback_request(file_name, scan_result)
